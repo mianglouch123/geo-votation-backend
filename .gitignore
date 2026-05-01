@@ -1,0 +1,45 @@
+# Dependencias
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Variables de entorno
+.env
+.env.local
+.env.production
+.env.development
+
+# Archivos de sistema
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Directorios de construcción
+dist/
+build/
+
+# Archivos de cobertura
+coverage/
+.nyc_output/
+
+# Bases de datos locales
+*.db
+*.sqlite
+
+# Archivos de respaldo
+*.bak
+*.tmp
+*.temp
+
+# Configuración de nodemon
+nodemon.json
