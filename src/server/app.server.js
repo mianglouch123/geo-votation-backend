@@ -28,7 +28,7 @@ export class AppServer {
           styleSrc: ["'self'", "'unsafe-inline'"],
           scriptSrc: ["'self'"],
           imgSrc: ["'self'", "data:", "https:"],
-          connectSrc: ["'self'", this.#systemEnv.API_URL],
+          connectSrc: ["'self'", this.#systemEnv.API_URL, process.env.FRONT_URL],
         }
       },
     xssFilter: true,        // Protege contra XSS
@@ -41,7 +41,13 @@ export class AppServer {
     // 2️⃣ CORS - Configuración de orígenes
     // ===========================================
     this.#app.use(cors({
-      origin: ["http://localhost:3000", "http://localhost:5173"],
+      origin: [
+      "http://localhost:3000", 
+      "http://localhost:5173",
+      String(`${ process.env.FRONT_URL || "https://geo-votation-frontend.vercel.app"}`),
+      "https://geo-votation-backend.onrender.com" // ← Agregar
+
+      ],
       credentials: true,
       allowedHeaders: ["Content-Type", "Authorization"],
       methods: ["GET", "POST", "DELETE", "PATCH", "PUT"],
