@@ -1,3 +1,4 @@
+// backend/src/controllers/admin/votation/duplicate.votation.controller.js
 import mongoose from "mongoose";
 import { request, response } from "express";
 import { VotationModel } from "../../../models/votation.model.js";
@@ -45,7 +46,7 @@ export class DuplicateVotationController {
 
       session.startTransaction();
 
-      // ✅ Obtener votación original
+      // Obtener votación original
       const votation = await VotationModel.findById(votationId)
         .lean()
         .session(session);
@@ -83,7 +84,7 @@ export class DuplicateVotationController {
         }
       }
 
-      // ✅ Crear nueva votación
+      // Crear nueva votación
       const [newVotation] = await VotationModel.create([{
         ownerId: userId,
         subject: newSubject,
@@ -91,64 +92,29 @@ export class DuplicateVotationController {
         closes_at: parsedDate
       }], { session });
 
-      // ✅ Obtener preguntas originales (sin duplicados)
+      // Obtener preguntas originales
       const questions = await QuestionModel.find({ 
         votationId: votationId,
         isActive: true
       }).lean().session(session);
 
-      // ✅ Control de duplicados usando Map
-      const uniqueQuestions = new Map(); // key: código de pregunta, value: pregunta
-      
-      for (const question of questions) {
-        const questionKey = question.code; // Usar el código como identificador único
-        if (!uniqueQuestions.has(questionKey)) {
-          uniqueQuestions.set(questionKey, question);
-        }
-      }
-
-      const uniqueQuestionsList = Array.from(uniqueQuestions.values());
-      console.log(`📋 Preguntas originales: ${questions.length}, Únicas: ${uniqueQuestionsList.length}`);
-
-      // ✅ Crear nuevas preguntas y configuraciones
-      const questionMap = new Map(); // originalId -> newQuestionId
-      const processedCodes = new Set(); // Para evitar duplicados por código
-
-      for (const originalQuestion of uniqueQuestionsList) {
-        const questionCode = originalQuestion.code;
-        
-        // Verificar si ya procesamos este código
-        if (processedCodes.has(questionCode)) {
-          console.warn(`⚠️ Código duplicado detectado: ${questionCode}, omitiendo...`);
-          continue;
-        }
-        
-        // Verificar si ya existe una pregunta con el mismo código en la nueva votación
-        const existingQuestion = await QuestionModel.findOne({
-          votationId: newVotation._id,
-          code: questionCode,
-          isActive: true
-        }).session(session);
-        
-        if (existingQuestion) {
-          console.warn(`⚠️ Ya existe pregunta con código "${questionCode}" en la votación duplicada, omitiendo...`);
-          processedCodes.add(questionCode);
-          questionMap.set(originalQuestion._id.toString(), existingQuestion._id.toString());
-          continue;
-        }
+      // Crear nuevas preguntas con código ÚNICO
+      for (const originalQuestion of questions) {
+        // 🔥 Generar código único para la pregunta duplicada
+        const uniqueCode = `${originalQuestion.code}_copy_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
         
         // Crear nueva pregunta
         const [newQuestion] = await QuestionModel.create([{
           votationId: newVotation._id,
           label: originalQuestion.label,
-          code: originalQuestion.code,
+          code: uniqueCode,  // ← Código único
           type: originalQuestion.type,
           isRequired: originalQuestion.isRequired,
           version: 1,
           isActive: true
         }], { session });
         
-        // Obtener configuración original (última versión activa)
+        // Obtener configuración original
         const configs = await QuestionConfigModel.find({ 
           questionId: originalQuestion._id 
         })
@@ -159,30 +125,18 @@ export class DuplicateVotationController {
         
         const originalConfig = configs[0];
         
-        // Crear nueva configuración si no existe
+        // Crear nueva configuración
         if (originalConfig) {
-          const existingConfig = await QuestionConfigModel.findOne({
+          await QuestionConfigModel.create([{
+            votationId: newVotation._id,
             questionId: newQuestion._id,
-            questionVersion: 1
-          }).session(session);
-          
-          if (!existingConfig) {
-            await QuestionConfigModel.create([{
-              votationId: newVotation._id,
-              questionId: newQuestion._id,
-              questionVersion: 1,
-              config: originalConfig.config
-            }], { session });
-          }
+            questionVersion: 1,
+            config: originalConfig.config
+          }], { session });
         }
-        
-        processedCodes.add(questionCode);
-        questionMap.set(originalQuestion._id.toString(), newQuestion._id.toString());
       }
 
-      console.log(`✅ Duplicación completada: ${questionMap.size} preguntas procesadas`);
-
-      // ✅ Notificación
+      // Notificación
       const handler = notificationHandlers["VOTATION_CREATED"];
       if (handler) {
         await handler.execute({
@@ -207,7 +161,7 @@ export class DuplicateVotationController {
           votationId: newVotation._id,
           subject: newVotation.subject,
           originalVotationId: votationId,
-          questionsDuplicated: questionMap.size
+          questionsDuplicated: questions.length
         }
       });
 
