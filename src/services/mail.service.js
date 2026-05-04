@@ -7,13 +7,16 @@ export class MailService {
   constructor() {
     this.transporter = nodemailer.createTransport({
     host: "smtp.gmail.com", // El servidor correcto
-    port: 465,               // Puerto para conexiones seguras (SSL)
-    secure: true,            // Obligatorio para el puerto 465
+    port: 587,               // Puerto para conexiones seguras (SSL)
+    secure: false,            // Obligatorio para el puerto 465
    auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.GOOGLE_APP_PASSWORD,
   },
-  family: 4                // Esto soluciona tu error de red inicial
+  family: 4,                // Esto soluciona tu error de red inicial
+  connectionTimeout: 10000, // Tiempo máximo para establecer la conexión
+  greetingTimeout: 10000,   // Tiempo para esperar el saludo del servidor SMTP
+  socketTimeout: 15000,     // Tiempo de inactividad permitido en el socket
 });
     this.EmailLogModel = EmailLogModel;
   }
