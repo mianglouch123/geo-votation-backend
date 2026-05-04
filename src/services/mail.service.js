@@ -6,13 +6,15 @@ export class MailService {
 
   constructor() {
     this.transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.GOOGLE_APP_PASSWORD,
-      },
-      family : 4
-    });
+    host: "smtp.gmail.com", // El servidor correcto
+    port: 465,               // Puerto para conexiones seguras (SSL)
+    secure: true,            // Obligatorio para el puerto 465
+   auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.GOOGLE_APP_PASSWORD,
+  },
+  family: 4                // Esto soluciona tu error de red inicial
+});
     this.EmailLogModel = EmailLogModel;
   }
   async sendPasswordResetEmail(to, token) {
