@@ -13,6 +13,9 @@ export class AppServer {
   constructor() {
     this.#app = express();
     this.#systemEnv = SystemEnv.getInstance();
+
+    this.#app.set("trust proxy", 1);
+
     this.#middlewares();
     this.#loadRoutes();
   }
