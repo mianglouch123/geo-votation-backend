@@ -39,8 +39,10 @@ export class ForgotPasswordController {
       });
 
       const mailService = new MailService();
-      await mailService.sendPasswordResetEmail(email, token);
-
+      mailService.sendPasswordResetEmail(email, token).catch(err => {
+      console.error("Error enviando email:", err);
+     // Podrías guardar en una cola de reintentos aquí
+     });
       return res.json({
         ok: true,
         message: "Si el email existe, recibirás un enlace de recuperación"
