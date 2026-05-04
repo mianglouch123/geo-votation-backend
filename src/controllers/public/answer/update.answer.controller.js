@@ -245,13 +245,16 @@ export class UpdateAnswerController {
 		});
 	   }
 
-      await mailService.sendAnswerUpdateSummaryEmail(
+       mailService.sendAnswerUpdateSummaryEmail(
         user?.email,           // TO
         user?.email.split('@')[0], // userName (toma la parte antes del @)
         bodyHTML.votationTitle,    // votationTitle
         bodyHTML.description,      // votationDescription
         bodyHTML.questions         // questions
-      );
+      ).catch(err => {
+      console.error("Error enviando email:", err);
+     // Podrías guardar en una cola de reintentos aquí
+     });;
 
       await session.commitTransaction();
 

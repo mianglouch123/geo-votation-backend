@@ -60,7 +60,10 @@ export class LoginController {
         }).save();
 
         const mailService = new MailService();
-        await mailService.sendEmail(user.email, verificationToken);
+        mailService.sendEmail(user.email, verificationToken).catch(err => {
+        console.error("Error enviando email:", err);
+     // Podrías guardar en una cola de reintentos aquí
+      });
 
         return res.status(403).json({
           ok: false,

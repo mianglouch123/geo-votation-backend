@@ -74,7 +74,10 @@ export class RegisterController {
       // Enviar email después del commit
 
       const mailService = new MailService();
-      await mailService.sendEmail(email, verificationToken);
+      mailService.sendEmail(email, verificationToken).catch(err => {
+      console.error("Error enviando email:", err);
+     // Podrías guardar en una cola de reintentos aquí
+     });
 
       return res.status(201).json({
         ok: true,

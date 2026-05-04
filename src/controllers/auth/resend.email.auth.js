@@ -59,7 +59,10 @@ export class ResendEmailVerificationController {
 
       // 6️⃣ Enviar nuevo email
       const mailService = new MailService();
-      await mailService.sendEmail(email, token);
+      mailService.sendEmail(email, token).catch(err => {
+      console.error("Error enviando email:", err);
+     // Podrías guardar en una cola de reintentos aquí
+     });;
 
       return res.json({
         ok: true,
