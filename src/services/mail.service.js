@@ -11,6 +11,7 @@ export class MailService {
         user: process.env.EMAIL_USER,
         pass: process.env.GOOGLE_APP_PASSWORD,
       },
+      family : 4
     });
     this.EmailLogModel = EmailLogModel;
   }
