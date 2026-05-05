@@ -127,7 +127,7 @@ export class MailService {
         const d2 = value?.value?.date ? new Date(value.value.date) : null;
         const isValid = (d) => d instanceof Date && !isNaN(d);
         const pickDate = isValid(d1) ? d1 : (isValid(d2) ? d2 : null);
-        return pickDate ? pickDate.toLocaleDateString("es-CL") : "No especificada";
+        return pickDate ? pickDate.toISOString().split("T")[0]: "No especificada";
       }
 
       case "MULTI_OPTION": {

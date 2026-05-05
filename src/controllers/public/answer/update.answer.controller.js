@@ -17,7 +17,6 @@ export class UpdateAnswerController {
     try {
       const { answers } = req.body;
       
-      // Validar que es un array
       if (!Array.isArray(answers) || answers.length === 0) {
         return res.status(400).json({
           ok: false,
@@ -25,7 +24,6 @@ export class UpdateAnswerController {
         });
       }
 
-      // Validar estructura del bulk
       const parserAnswer = BulkAnswersInputSchema.safeParse({ answers });
       if (!parserAnswer.success) {
         return res.status(400).json({
@@ -38,22 +36,32 @@ export class UpdateAnswerController {
       session.startTransaction();
 
       const answersToUpdate = [];
+      const answersToCreate = [];
       const errors = [];
 
-      let votationId = parserAnswer?.data?.answers[0]?.votationId
+      let votationId = parserAnswer?.data?.answers[0]?.votationId;
       let votation = null;
 
       try {
-		votation = await dbBreaker.call(() => VotationModel.findById(new mongoose. Types.ObjectId(votationId)) ,async () => {
-		 throw new Error("Votacion no encontrada");
-		})
-		} 
-		catch(err) {
-		 if(err?.message === "Votacion no encontrada") {
-		  await session.abortTransaction();
-		   return res.status(404).json({ ok : false , message : "Votación no encontrada" , votationId : String(votationId) });
-		 }
-		}
+        votation = await dbBreaker.call(() => VotationModel.findById(new mongoose.Types.ObjectId(votationId)), async () => {
+          throw new Error("Votacion no encontrada");
+        });
+      } catch(err) {
+        if(err?.message === "Votacion no encontrada") {
+          await session.abortTransaction();
+          return res.status(404).json({ ok: false, message: "Votación no encontrada", votationId: String(votationId) });
+        }
+      }
+
+      // Verificar si la votación está cerrada (una sola vez)
+      const isVotationClosed = new Date(votation.closes_at) < new Date();
+      if (isVotationClosed) {
+        await session.abortTransaction();
+        return res.status(400).json({
+          ok: false,
+          message: "La votación está cerrada, no se pueden actualizar respuestas"
+        });
+      }
 
       const bodyHTML = {
         votationTitle: votation.subject || "",
@@ -74,67 +82,14 @@ export class UpdateAnswerController {
           continue;
         }
 
-        // 🔥 1. Verificar que la respuesta existe (protegido)
-        let existingAnswer;
-        try {
-          existingAnswer = await dbBreaker.call(
-            () => AnswerModel.findOne({
-              userId: answerData.userId,
-              votationId: answerData.votationId,
-              questionId: answerData.questionId,
-              questionVersion: answerData.questionVersion
-            }).session(session),
-            fallBacksBreaker.fallbackNull
-          );
-        } catch (breakerErr) {
-          await session.abortTransaction();
-          return res.status(503).json({
-            ok: false,
-            message: "Servicio temporalmente no disponible. Intenta más tarde.",
-            retryAfter: 30
-          });
-        }
-
-        if (!existingAnswer) {
-          errors.push({
-            questionId: answerData.questionId,
-            error: "Respuesta no encontrada para actualizar"
-          });
-          continue;
-        }
-
-        // 🔥 2. Verificar que la votación sigue abierta (protegido)
-        let votation;
-        try {
-          votation = await dbBreaker.call(
-            () => VotationModel.findById(answerData.votationId).session(session),
-            fallBacksBreaker.fallbackNull
-          );
-        } catch (breakerErr) {
-          await session.abortTransaction();
-          return res.status(503).json({
-            ok: false,
-            message: "Servicio temporalmente no disponible. Intenta más tarde.",
-            retryAfter: 30
-          });
-        }
-
-        if (!votation || new Date(votation.closes_at) < new Date()) {
-          errors.push({
-            questionId: answerData.questionId,
-            error: "La votación está cerrada, no se puede actualizar"
-          });
-          continue;
-        }
-
-        // 🔥 3. Buscar la pregunta (protegido)
+        // 🔥 1. Buscar la pregunta
         let question;
         try {
           question = await dbBreaker.call(
             () => QuestionModel.findOne({
               _id: answerData.questionId,
               votationId: answerData.votationId,
-              version: answerData.questionVersion
+              isActive: true
             }).session(session),
             fallBacksBreaker.fallbackNull
           );
@@ -150,12 +105,12 @@ export class UpdateAnswerController {
         if (!question) {
           errors.push({
             questionId: answerData.questionId,
-            error: "Pregunta no encontrada o versión incorrecta"
+            error: "Pregunta no encontrada o inactiva en esta votación"
           });
           continue;
         }
 
-        // ✅ VALIDACIÓN ZOD (protege contra campos extra)
+        // 🔥 2. Validar el formato de la respuesta
         const validationResult = QuestionTypeConfigSchemas.safeParse({
           type: question.type,
           config: answerData.value
@@ -170,99 +125,138 @@ export class UpdateAnswerController {
           });
           continue;
         }
-        // AGRUPAR DATOS AL CORREO - Formato que espera sendAnswerSummaryEmail
+
+        // 🔥 3. Buscar si ya existe una respuesta
+        let existingAnswer = null;
+        try {
+          existingAnswer = await dbBreaker.call(
+            () => AnswerModel.findOne({
+              userId: answerData.userId,
+              votationId: answerData.votationId,
+              questionId: answerData.questionId,
+              questionVersion: question.version
+            }).session(session),
+            fallBacksBreaker.fallbackNull
+          );
+        } catch (breakerErr) {
+          await session.abortTransaction();
+          return res.status(503).json({
+            ok: false,
+            message: "Servicio temporalmente no disponible. Intenta más tarde.",
+            retryAfter: 30
+          });
+        }
+
+        // Agrupar datos para el email
         bodyHTML.questions.push({
           label: question?.label,
           type: question?.type,
           value: answerData.value
-        })
+        });
 
         if(answerData.userId && !bodyHTML.userId) {
           bodyHTML.userId = answerData.userId;
         }
 
-        answersToUpdate.push({
-          filter: {
+        // 🔥 4. Decidir si actualizar o crear
+        if (existingAnswer) {
+          answersToUpdate.push({
+            filter: {
+              userId: answerData.userId,
+              votationId: answerData.votationId,
+              questionId: answerData.questionId,
+              questionVersion: question.version
+            },
+            update: {
+              value: answerData.value
+            }
+          });
+        } else {
+          answersToCreate.push({
             userId: answerData.userId,
             votationId: answerData.votationId,
             questionId: answerData.questionId,
-            questionVersion: answerData.questionVersion
-          },
-          update: {
+            questionVersion: question.version,
             value: answerData.value
+          });
+        }
+      }
+
+      // 🔥 5. Ejecutar actualizaciones
+      if (answersToUpdate.length > 0) {
+        try {
+          for (const item of answersToUpdate) {
+            await dbBreaker.call(
+              () => AnswerModel.updateOne(
+                item.filter,
+                { $set: item.update },
+                { session }
+              ),
+              fallBacksBreaker.fallbackEmptyArray
+            );
           }
-        });
+        } catch (breakerErr) {
+          await session.abortTransaction();
+          return res.status(503).json({
+            ok: false,
+            message: "Servicio temporalmente no disponible. Intenta más tarde.",
+            retryAfter: 30
+          });
+        }
       }
 
-      if (answersToUpdate.length === 0) {
-        await session.abortTransaction();
-        return res.status(400).json({
-          ok: false,
-          message: "No hay respuestas válidas para actualizar",
-          errors
-        });
-      }
-
-      // 🔥 4. Ejecutar actualizaciones (protegido)
-      try {
-        for (const item of answersToUpdate) {
+      // 🔥 6. Insertar nuevas respuestas
+      if (answersToCreate.length > 0) {
+        try {
           await dbBreaker.call(
-            () => AnswerModel.updateOne(
-              item.filter,
-              { $set: item.update },
-              { session }
-            ),
+            () => AnswerModel.insertMany(answersToCreate, { session }),
             fallBacksBreaker.fallbackEmptyArray
           );
+        } catch (breakerErr) {
+          await session.abortTransaction();
+          return res.status(503).json({
+            ok: false,
+            message: "Servicio temporalmente no disponible. Intenta más tarde.",
+            retryAfter: 30
+          });
         }
-      } catch (breakerErr) {
-        await session.abortTransaction();
-        return res.status(503).json({
-          ok: false,
-          message: "Servicio temporalmente no disponible. Intenta más tarde.",
-          retryAfter: 30
-        });
       }
-        const mailService = new MailService();
-		const userId = bodyHTML.userId;
-			  
-		if(!userId) {
-		 await session.abortTransaction();
-		  return res.status(404).json({
-		  ok: false,
-		  message: "El usuario no ha sido enviado.",
-		 });
-		}
 
+      const totalProcessed = answersToUpdate.length + answersToCreate.length;
+
+      // Enviar email (no bloqueante)
+      const mailService = new MailService();
+      const userId = bodyHTML.userId;
+          
+      if(userId) {
         let user = null;
-		user = await dbBreaker.call(() => UserModel.findById(userId), fallBacksBreaker.fallbackNull)
-		  
-		if(!user) {
-		 await session.abortTransaction();
-		 return res.status(404).json({
-		  ok: false,
-		  message: "El usuario no ha sido encontrado.",
-		});
-	   }
-
-       mailService.sendAnswerUpdateSummaryEmail(
-        user?.email,           // TO
-        user?.email.split('@')[0], // userName (toma la parte antes del @)
-        bodyHTML.votationTitle,    // votationTitle
-        bodyHTML.description,      // votationDescription
-        bodyHTML.questions         // questions
-      ).catch(err => {
-      console.error("Error enviando email:", err);
-     // Podrías guardar en una cola de reintentos aquí
-     });;
+        try {
+          user = await dbBreaker.call(() => UserModel.findById(userId), fallBacksBreaker.fallbackNull);
+        } catch(err) {
+          console.error("Error buscando usuario:", err);
+        }
+        
+        if(user) {
+          mailService.sendAnswerUpdateSummaryEmail(
+            user?.email,
+            user?.email.split('@')[0],
+            bodyHTML.votationTitle,
+            bodyHTML.description,
+            bodyHTML.questions
+          ).catch(err => {
+            console.error("Error enviando email:", err);
+          });
+        }
+      }
 
       await session.commitTransaction();
 
       return res.status(200).json({
         ok: true,
-        message: `Respuestas actualizadas: ${answersToUpdate.length} exitosas`,
+        message: `Respuestas procesadas: ${totalProcessed} exitosas (${answersToUpdate.length} actualizadas, ${answersToCreate.length} nuevas)`,
         data: {
           updated: answersToUpdate.length,
+          created: answersToCreate.length,
           ...(errors.length > 0 && {
             warnings: {
               count: errors.length,
